@@ -36,7 +36,7 @@ class Transformer(nn.Module):
         self.positional_encoding = PositionalEncoding(d_model, num_positions)
         self.layers = nn.ModuleList([TransformerLayer(d_model, d_internal) for _ in range(num_layers)])
         self.fc_out = nn.Linear(d_model, num_classes)
-        self.log_softmax = nn.Softmax(dim=-1) # -1 is the last dimension
+        self.log_softmax = nn.LogSoftmax(dim=-1) # -1 is the last dimension
     
     def forward(self, indices):
         # Step 1: Embed the input indices
