@@ -36,7 +36,7 @@ class Transformer(nn.Module):
         self.positional_encoding = PositionalEncoding(d_model, num_positions)
         self.layers = nn.ModuleList([TransformerLayer(d_model, d_internal) for _ in range(num_layers)])
         self.fc_out = nn.Linear(d_model, num_classes)
-        self.log_softmax = nn.LogSoftmax(dim=-1)
+        self.log_softmax = nn.Softmax(dim=-1) # -1 is the last dimension
     
     def forward(self, indices):
         # Step 1: Embed the input indices
@@ -66,32 +66,32 @@ class TransformerLayer(nn.Module):
     def __init__(self, d_model, d_internal):
         super().__init__()
         self.query_layer = nn.Linear(d_model, d_internal)  # [d_model, d_internal]
-        self.key_layer = nn.Linear(d_model, d_internal)    # [d_model, d_internal]
-        self.value_layer = nn.Linear(d_model, d_internal)  # [d_model, d_internal]
+        self.key_layer = nn.Linear(d_model, d_internal)
+        self.value_layer = nn.Linear(d_model, d_internal)
         self.d_internal = d_internal
 
-        self.linear1 = nn.Linear(d_internal, d_internal)  # Ensure this is from d_internal to d_internal
-        self.relu = nn.ReLU()
-        self.linear2 = nn.Linear(d_internal, d_model)      # Ensure this is from d_internal to d_model
+        self.linear1 = nn.Linear(d_internal, d_internal)
+        self.relu = nn.ReLU() # non-linearity
+        self.linear2 = nn.Linear(d_internal, d_model)
 
     def forward(self, input_vecs):
-        # Compute query, key, and value vectors
-        queries = self.query_layer(input_vecs)  # [batch_size, seq_len, d_internal]
-        keys = self.key_layer(input_vecs)        # [batch_size, seq_len, d_internal]
-        values = self.value_layer(input_vecs)    # [batch_size, seq_len, d_internal]
+        # Compute query, key, and value vectors of dim [batch_size, seq_len, d_internal]
+        queries = self.query_layer(input_vecs)
+        keys = self.key_layer(input_vecs)
+        values = self.value_layer(input_vecs)
 
-        # Transpose keys for attention calculation
-        keys = keys.transpose(-2, -1)  # [batch_size, d_internal, seq_len]
+        # Transpose keys matrix [batch_size, d_internal, seq_len]
+        keys = keys.transpose(-2, -1)
 
-        # Compute self-attention scores
-        scores = torch.matmul(queries, keys) / math.sqrt(self.d_internal)  # [batch_size, seq_len, seq_len]
-        attn_scores = torch.softmax(scores, dim=-1)  # [batch_size, seq_len, seq_len]
+        # Compute self-attention scores [batch_size, seq_len, seq_len]
+        scores = torch.matmul(queries, keys) / math.sqrt(self.d_internal)
+        attn_scores = torch.softmax(scores, dim=-1) # softmax the last dimension
 
-        # Apply attention scores to values
-        weighted_values = torch.matmul(attn_scores, values)  # [batch_size, seq_len, d_internal]
+        # Apply attention scores to values to output [batch_size, seq_len, d_internal]
+        weighted_values = torch.matmul(attn_scores, values)
 
-        # Feedforward layers
-        ff_out = self.linear2(self.relu(self.linear1(weighted_values)))  # [batch_size, seq_len, d_model]
+        # Feedforward layers to output [batch_size, seq_len, d_model]
+        ff_out = self.linear2(self.relu(self.linear1(weighted_values)))
         return ff_out, attn_scores
 
 
@@ -118,6 +118,9 @@ class PositionalEncoding(nn.Module):
         """
         # Second-to-last dimension will always be sequence length
         input_size = x.shape[-2]
+        # Use LongTensor when you need to store and manipulate integers, particularly for tasks like indexing or when 
+        # handling categorical data (e.g., labels in classification tasks). Use the default tensor (floating-point) for
+        # most mathematical and neural network operations, which typically involve floating-point computations.
         indices_to_embed = torch.tensor(np.asarray(range(0, input_size))).type(torch.LongTensor)
         if self.batched:
             # Use unsqueeze to form a [1, seq len, embedding dim] tensor -- broadcasting will ensure that this
@@ -130,10 +133,10 @@ class PositionalEncoding(nn.Module):
 
 # This is a skeleton for train_classifier: you can implement this however you want
 def train_classifier(args, train, dev):
-    model = Transformer(vocab_size=27, num_positions=20, d_model=64, d_internal=128, num_classes=3, num_layers=1)
+    model = Transformer(vocab_size=27, num_positions=20, d_model=64, d_internal=128, num_classes=3, num_layers=1) # 27 characters, 3 classes
     model.train()
     optimizer = optim.Adam(model.parameters(), lr=1e-4)
-    loss_fcn = nn.NLLLoss()
+    loss_fn = nn.NLLLoss()
 
     for epoch in range(10):
         total_loss = 0.0
@@ -144,7 +147,7 @@ def train_classifier(args, train, dev):
             log_probs, _ = model(example.input_tensor)
             
             # Compute loss
-            loss = loss_fcn(log_probs.squeeze(0), example.output_tensor)
+            loss = loss_fn(log_probs.squeeze(0), example.output_tensor)
             loss.backward()
             optimizer.step()
             
