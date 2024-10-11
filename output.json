@@ -1,1 +1,1 @@
-{"sane": true, "normalizes": true, "range": true, "log_prob": -1408.4661836029122, "avg_log_prob": -2.8169323672058244, "perplexity": 16.72546431237328}
+{"sane": false, "normalizes": false, "range": false, "log_prob": 734.1100231892337, "avg_log_prob": 1.4682200463784676, "perplexity": 0.230335106331937}
