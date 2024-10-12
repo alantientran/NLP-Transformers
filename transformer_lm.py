@@ -107,7 +107,7 @@ class NeuralLanguageModel(LanguageModel, nn.Module):
 
 def train_lm(args, train_text, dev_text, vocab_index, batch_size=32):
     vocab_size = len(vocab_index)
-    model = NeuralLanguageModel(vocab_size, num_positions=64, d_model=64, d_internal=128, num_layers=4)
+    model = NeuralLanguageModel(vocab_size, num_positions=64, d_model=128, d_internal=256, num_layers=4)
     model.vocab_index = vocab_index
 
     optimizer = optim.Adam(model.parameters(), lr=0.001)
