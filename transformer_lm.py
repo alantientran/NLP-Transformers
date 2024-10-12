@@ -38,22 +38,45 @@ class PositionalEncoding(nn.Module):
             return x + self.emb(indices_to_embed)
 
 
+import torch
+import torch.nn as nn
+import torch.optim as optim
+import numpy as np
+import math
+
 class NeuralLanguageModel(LanguageModel, nn.Module):
-    def __init__(self, vocab_size, num_positions, d_model, d_internal, num_layers):
+    def __init__(self, vocab_size, num_positions, d_model, d_internal, num_layers, nhead=8):
         super(NeuralLanguageModel, self).__init__()
-        self.embedding = nn.Embedding(vocab_size, d_model)
-        self.positional_encoding = PositionalEncoding(d_model, num_positions, batched=True)
-        encoder_layers = nn.TransformerEncoderLayer(d_model, nhead=8, dim_feedforward=d_internal)
-        self.transformer_encoder = nn.TransformerEncoder(encoder_layers, num_layers=num_layers)
-        self.fc_out = nn.Linear(d_model, vocab_size)
+        self.model_type = 'Transformer'
+        self.pos_encoder = PositionalEncoding(d_model, num_positions, batched=False)
+        encoder_layers = nn.TransformerEncoderLayer(d_model, nhead, d_internal)
+        self.transformer_encoder = nn.TransformerEncoder(encoder_layers, num_layers)
+        self.encoder = nn.Embedding(vocab_size, d_model)
+        self.d_model = d_model
+        self.decoder = nn.Linear(d_model, vocab_size)
+        
         self.vocab_size = vocab_size
         self.num_positions = num_positions
 
-    def forward(self, x):
-        embedded = self.embedding(x)
-        encoded = self.positional_encoding(embedded)
-        transformer_output = self.transformer_encoder(encoded)
-        output = self.fc_out(transformer_output)
+        self.init_weights()
+
+    def init_weights(self):
+        initrange = 0.1
+        self.encoder.weight.data.uniform_(-initrange, initrange)
+        self.decoder.bias.data.zero_()
+        self.decoder.weight.data.uniform_(-initrange, initrange)
+
+    def generate_square_subsequent_mask(self, sz):
+        mask = (torch.triu(torch.ones(sz, sz)) == 1).transpose(0, 1)
+        mask = mask.float().masked_fill(mask == 0, float('-inf')).masked_fill(mask == 1, float(0.0))
+        return mask
+
+    def forward(self, src):
+        src = self.encoder(src) * math.sqrt(self.d_model)
+        src = self.pos_encoder(src)
+        src_mask = self.generate_square_subsequent_mask(src.size(0)).to(src.device)
+        output = self.transformer_encoder(src, src_mask)
+        output = self.decoder(output)
         return output
 
     def get_next_char_log_probs(self, context):
@@ -61,10 +84,12 @@ class NeuralLanguageModel(LanguageModel, nn.Module):
         if not context:
             return np.log(np.ones(self.vocab_size) / self.vocab_size)
         
-        context_tensor = torch.LongTensor([self.vocab_index.index_of(c) for c in context[-self.num_positions:]])
-        context_tensor = context_tensor.unsqueeze(0)
-        log_probs = self(context_tensor)
-        return log_probs[0, -1].detach().numpy()
+        context_indices = [self.vocab_index.index_of(c) for c in context[-self.num_positions:]]
+        context_tensor = torch.LongTensor(context_indices).unsqueeze(1)  # Add batch dimension
+        with torch.no_grad():
+            output = self.forward(context_tensor)
+            log_probs = torch.log_softmax(output[-1], dim=-1)
+        return log_probs.squeeze().numpy()
 
     def get_log_prob_sequence(self, next_chars, context):
         self.eval()
@@ -75,74 +100,58 @@ class NeuralLanguageModel(LanguageModel, nn.Module):
             context += char
         return log_prob
 
-
 def train_lm(args, train_text, dev_text, vocab_index):
     vocab_size = len(vocab_index)
     model = NeuralLanguageModel(vocab_size, num_positions=100, d_model=128, d_internal=256, num_layers=4)
     model.vocab_index = vocab_index
 
     optimizer = optim.Adam(model.parameters(), lr=0.001)
-    loss_fn = nn.CrossEntropyLoss()
+    criterion = nn.CrossEntropyLoss()
 
     chunk_size = 100
-    batch_size = 32
     num_epochs = 10
 
     for epoch in range(num_epochs):
         model.train()
         total_loss = 0
+        num_chunks = len(train_text) // chunk_size
 
-        # Create batches
-        num_batches = len(train_text) // (chunk_size * batch_size)
-        for i in range(num_batches):
-            batch_start = i * chunk_size * batch_size
-            batch_end = (i + 1) * chunk_size * batch_size
-            batch_text = train_text[batch_start:batch_end]
+        for i in range(num_chunks):
+            chunk_start = i * chunk_size
+            chunk_end = (i + 1) * chunk_size
+            chunk = train_text[chunk_start:chunk_end]
+            next_char = train_text[chunk_end] if chunk_end < len(train_text) else train_text[0]
+            
+            input_indices = [vocab_index.index_of(c) for c in chunk]
+            target_indices = [vocab_index.index_of(c) for c in chunk[1:] + next_char]
 
-            input_batch = []
-            target_batch = []
-
-            for j in range(0, len(batch_text), chunk_size):
-                chunk = batch_text[j:j + chunk_size]
-                next_char = batch_text[j + chunk_size] if j + chunk_size < len(batch_text) else batch_text[0]
-
-                # Pad the chunk if it's shorter than chunk_size
-                if len(chunk) < chunk_size:
-                    chunk = chunk + ' ' * (chunk_size - len(chunk))
-
-                input_batch.append([vocab_index.index_of(c) for c in chunk])
-                target_batch.append([vocab_index.index_of(c) for c in chunk[1:] + next_char])
-
-            input_batch = torch.LongTensor(input_batch)
-            target_batch = torch.LongTensor(target_batch)
+            input_tensor = torch.LongTensor(input_indices).unsqueeze(1)  # Add batch dimension
+            target_tensor = torch.LongTensor(target_indices)
 
             optimizer.zero_grad()
-            log_probs = model(input_batch)
-            loss = loss_fn(log_probs.view(-1, vocab_size), target_batch.view(-1))
+            output = model(input_tensor)
+            loss = criterion(output.squeeze(1), target_tensor)
             loss.backward()
             optimizer.step()
 
             total_loss += loss.item()
 
-        print(f"Epoch {epoch + 1}, Loss: {total_loss / num_batches}")
+        print(f"Epoch {epoch+1}, Loss: {total_loss / num_chunks}")
 
         # Evaluate on dev set
         model.eval()
         dev_loss = 0
-        num_dev_batches = len(dev_text) // chunk_size
-        for i in range(num_dev_batches):
-            dev_chunk = dev_text[i * chunk_size:(i + 1) * chunk_size]
-            next_char = dev_text[(i + 1) * chunk_size] if (i + 1) * chunk_size < len(dev_text) else dev_text[0]
-
-            # Pad the chunk if it's shorter than chunk_size
-            if len(dev_chunk) < chunk_size:
-                dev_chunk = dev_chunk + ' ' * (chunk_size - len(dev_chunk))
-
-            input_dev = torch.LongTensor([[vocab_index.index_of(c) for c in dev_chunk]])
-            target_dev = torch.LongTensor([vocab_index.index_of(c) for c in dev_chunk[1:] + next_char])
-            log_probs = model(input_dev)
-            dev_loss += loss_fn(log_probs.squeeze(0), target_dev).item()
-
-        print(f"Dev Loss: {dev_loss / num_dev_batches}")
+        num_dev_chunks = len(dev_text) // chunk_size
+        with torch.no_grad():
+            for i in range(num_dev_chunks):
+                dev_chunk = dev_text[i*chunk_size:(i+1)*chunk_size]
+                next_char = dev_text[(i+1)*chunk_size] if (i+1)*chunk_size < len(dev_text) else dev_text[0]
+                
+                input_dev = torch.LongTensor([vocab_index.index_of(c) for c in dev_chunk]).unsqueeze(1)
+                target_dev = torch.LongTensor([vocab_index.index_of(c) for c in dev_chunk[1:] + next_char])
+                output = model(input_dev)
+                dev_loss += criterion(output.squeeze(1), target_dev).item()
+        
+        print(f"Dev Loss: {dev_loss / num_dev_chunks}")
 
     return model
