@@ -102,13 +102,13 @@ class NeuralLanguageModel(LanguageModel, nn.Module):
 
 def train_lm(args, train_text, dev_text, vocab_index):
     vocab_size = len(vocab_index)
-    model = NeuralLanguageModel(vocab_size, num_positions=100, d_model=128, d_internal=256, num_layers=4)
+    model = NeuralLanguageModel(vocab_size, num_positions=20, d_model=64, d_internal=256, num_layers=4)
     model.vocab_index = vocab_index
 
     optimizer = optim.Adam(model.parameters(), lr=0.001)
     criterion = nn.CrossEntropyLoss()
 
-    chunk_size = 100
+    chunk_size = 20
     num_epochs = 10
 
     for epoch in range(num_epochs):
