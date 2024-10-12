@@ -82,9 +82,12 @@ class NeuralLanguageModel(LanguageModel, nn.Module):
     def get_next_char_log_probs(self, context):
         self.eval()
         if not context:
-            return np.log(np.ones(self.vocab_size) / self.vocab_size)
+            context = ' '  # Use space as start-of-sequence token
         
         context_indices = [self.vocab_index.index_of(c) for c in context[-self.num_positions:]]
+        if len(context_indices) < self.num_positions:
+            context_indices = [self.vocab_index.index_of(' ')] + context_indices  # Prepend start-of-sequence token
+        
         context_tensor = torch.LongTensor(context_indices).unsqueeze(1)  # Add batch dimension
         with torch.no_grad():
             output = self.forward(context_tensor)
@@ -94,64 +97,100 @@ class NeuralLanguageModel(LanguageModel, nn.Module):
     def get_log_prob_sequence(self, next_chars, context):
         self.eval()
         log_prob = 0.0
+        if not context:
+            context = ' '  # Use space as start-of-sequence token
         for char in next_chars:
             char_log_probs = self.get_next_char_log_probs(context)
             log_prob += char_log_probs[self.vocab_index.index_of(char)]
             context += char
         return log_prob
 
-def train_lm(args, train_text, dev_text, vocab_index):
+def train_lm(args, train_text, dev_text, vocab_index, batch_size=32):
     vocab_size = len(vocab_index)
-    model = NeuralLanguageModel(vocab_size, num_positions=20, d_model=64, d_internal=256, num_layers=4)
+    model = NeuralLanguageModel(vocab_size, num_positions=64, d_model=64, d_internal=128, num_layers=4)
     model.vocab_index = vocab_index
 
     optimizer = optim.Adam(model.parameters(), lr=0.001)
     criterion = nn.CrossEntropyLoss()
 
-    chunk_size = 20
+    chunk_size = 20  # Sequence length for each training sample
     num_epochs = 10
 
+    def prepare_batch(text, vocab_index, chunk_size, batch_size):
+        """Prepare input and target tensors for a batch of sequences."""
+        num_chunks = len(text) // chunk_size
+        input_batch = []
+        target_batch = []
+
+        for i in range(0, num_chunks, batch_size):
+            batch_input = []
+            batch_target = []
+            for b in range(batch_size):
+                if i + b < num_chunks:
+                    chunk_start = (i + b) * chunk_size
+                    chunk_end = (i + b + 1) * chunk_size
+                    chunk = text[chunk_start:chunk_end]
+                    next_char = text[chunk_end] if chunk_end < len(text) else text[0]
+
+                    # Prepend space as start-of-sequence token
+                    input_indices = [vocab_index.index_of(' ')] + [vocab_index.index_of(c) for c in chunk]
+                    target_indices = [vocab_index.index_of(c) for c in chunk + next_char]
+
+                    batch_input.append(input_indices)
+                    batch_target.append(target_indices)
+
+            # Padding the sequences in the batch to the same length
+            max_len = max(len(seq) for seq in batch_input)
+            padded_input = [seq + [vocab_index.index_of(' ')] * (max_len - len(seq)) for seq in batch_input]
+            padded_target = [seq + [vocab_index.index_of(' ')] * (max_len - len(seq)) for seq in batch_target]
+
+            input_batch.append(torch.LongTensor(padded_input))
+            target_batch.append(torch.LongTensor(padded_target))
+
+        return input_batch, target_batch
+
+    # Training loop
     for epoch in range(num_epochs):
         model.train()
         total_loss = 0
-        num_chunks = len(train_text) // chunk_size
+        input_batches, target_batches = prepare_batch(train_text, vocab_index, chunk_size, batch_size)
 
-        for i in range(num_chunks):
-            chunk_start = i * chunk_size
-            chunk_end = (i + 1) * chunk_size
-            chunk = train_text[chunk_start:chunk_end]
-            next_char = train_text[chunk_end] if chunk_end < len(train_text) else train_text[0]
-            
-            input_indices = [vocab_index.index_of(c) for c in chunk]
-            target_indices = [vocab_index.index_of(c) for c in chunk[1:] + next_char]
-
-            input_tensor = torch.LongTensor(input_indices).unsqueeze(1)  # Add batch dimension
-            target_tensor = torch.LongTensor(target_indices)
-
+        for input_batch, target_batch in zip(input_batches, target_batches):
             optimizer.zero_grad()
+
+            # Input batch shape: [batch_size, sequence_length]
+            # Transpose it to [sequence_length, batch_size] for the transformer
+            input_tensor = input_batch.transpose(0, 1)
+            target_tensor = target_batch.transpose(0, 1)
+
             output = model(input_tensor)
-            loss = criterion(output.squeeze(1), target_tensor)
+            
+            # Using .reshape() to handle non-contiguous memory
+            loss = criterion(output.reshape(-1, vocab_size), target_tensor.reshape(-1))
             loss.backward()
             optimizer.step()
 
             total_loss += loss.item()
 
-        print(f"Epoch {epoch+1}, Loss: {total_loss / num_chunks}")
+        avg_loss = total_loss / len(input_batches)
+        print(f"Epoch {epoch + 1}, Loss: {avg_loss}")
 
-        # Evaluate on dev set
+        # Evaluation on dev set
         model.eval()
         dev_loss = 0
-        num_dev_chunks = len(dev_text) // chunk_size
+        dev_input_batches, dev_target_batches = prepare_batch(dev_text, vocab_index, chunk_size, batch_size)
         with torch.no_grad():
-            for i in range(num_dev_chunks):
-                dev_chunk = dev_text[i*chunk_size:(i+1)*chunk_size]
-                next_char = dev_text[(i+1)*chunk_size] if (i+1)*chunk_size < len(dev_text) else dev_text[0]
+            for dev_input_batch, dev_target_batch in zip(dev_input_batches, dev_target_batches):
+                input_tensor = dev_input_batch.transpose(0, 1)
+                target_tensor = dev_target_batch.transpose(0, 1)
+
+                output = model(input_tensor)
                 
-                input_dev = torch.LongTensor([vocab_index.index_of(c) for c in dev_chunk]).unsqueeze(1)
-                target_dev = torch.LongTensor([vocab_index.index_of(c) for c in dev_chunk[1:] + next_char])
-                output = model(input_dev)
-                dev_loss += criterion(output.squeeze(1), target_dev).item()
-        
-        print(f"Dev Loss: {dev_loss / num_dev_chunks}")
+                # Using .reshape() for non-contiguous tensors in evaluation too
+                dev_loss += criterion(output.reshape(-1, vocab_size), target_tensor.reshape(-1)).item()
+
+        avg_dev_loss = dev_loss / len(dev_input_batches)
+        dev_perplexity = math.exp(avg_dev_loss)
+        print(f"Dev Loss: {avg_dev_loss}, Dev Perplexity: {dev_perplexity}")
 
     return model
