@@ -127,7 +127,7 @@ class PositionalEncoding(nn.Module):
 
 # This is a skeleton for train_classifier: you can implement this however you want
 def train_classifier(args, train, dev):
-    model = Transformer(vocab_size=27, num_positions=20, d_model=64, d_internal=128, num_classes=3, num_layers=4) # 27 characters, 3 classes
+    model = Transformer(vocab_size=27, num_positions=20, d_model=64, d_internal=128, num_classes=3, num_layers=1) # 27 characters, 3 classes
     model.train()
     optimizer = optim.Adam(model.parameters(), lr=1e-4)
     loss_fn = nn.NLLLoss()
@@ -185,7 +185,7 @@ def decode(model: Transformer, dev_examples: List[LetterCountingExample], do_pri
                 ax.set_yticks(np.arange(len(ex.input)), labels=ex.input)
                 ax.xaxis.tick_top()
                 # plt.show()
-                plt.savefig("plots/%i_attns%i.png" % (i, j))
+                # plt.savefig("plots/%i_attns%i.png" % (i, j))
         acc = sum([predictions[i] == ex.output[i] for i in range(0, len(predictions))])
         num_correct += acc
         num_total += len(predictions)
