@@ -131,16 +131,5 @@ def train_lm(args, train_text, dev_text, vocab_index):
 
         # Evaluate on dev set
         model.eval()
-        dev_loss = 0
-        num_dev_chunks = len(dev_text) // chunk_size
-        with torch.no_grad():
-            for i in range(num_dev_chunks):
-                dev_chunk = ' ' + dev_text[i*chunk_size:(i+1)*chunk_size - 1]  # Add space as start-of-sequence token
-                next_char = dev_text[(i+1)*chunk_size - 1] if (i+1)*chunk_size <= len(dev_text) else dev_text[0]
-                
-                input_dev = torch.LongTensor([vocab_index.index_of(c) for c in dev_chunk]).unsqueeze(1)
-                target_dev = torch.LongTensor([vocab_index.index_of(c) for c in dev_chunk[1:] + next_char])
-                output = model(input_dev)
-                dev_loss += criterion(output.squeeze(1), target_dev).item()
 
     return model
