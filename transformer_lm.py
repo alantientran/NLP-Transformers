@@ -152,7 +152,7 @@ def train_lm(args, train_text, dev_text, vocab_index, batch_size=32):
 
             total_loss += loss.item()
 
-        print(f"Epoch {epoch+1}, Loss: {total_loss / num_batches}")
+        # print(f"Epoch {epoch+1}, Loss: {total_loss / num_batches}")
 
         # Evaluate on dev set
         model.eval()
@@ -163,6 +163,6 @@ def train_lm(args, train_text, dev_text, vocab_index, batch_size=32):
                 output = model(input_dev)
                 dev_loss += criterion(output.view(-1, vocab_size), target_dev.view(-1)).item()
 
-        print(f"Dev Loss: {dev_loss / num_dev_batches}")
+        # print(f"Dev Loss: {dev_loss / num_dev_batches}")
 
     return model
