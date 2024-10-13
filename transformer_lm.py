@@ -107,90 +107,62 @@ class NeuralLanguageModel(LanguageModel, nn.Module):
 
 def train_lm(args, train_text, dev_text, vocab_index, batch_size=32):
     vocab_size = len(vocab_index)
-    model = NeuralLanguageModel(vocab_size, num_positions=64, d_model=128, d_internal=256, num_layers=4)
+    model = NeuralLanguageModel(vocab_size, num_positions=20, d_model=64, d_internal=256, num_layers=4)
     model.vocab_index = vocab_index
 
     optimizer = optim.Adam(model.parameters(), lr=0.001)
     criterion = nn.CrossEntropyLoss()
 
-    chunk_size = 20  # Sequence length for each training sample
+    chunk_size = 20
     num_epochs = 10
 
-    def prepare_batch(text, vocab_index, chunk_size, batch_size):
-        """Prepare input and target tensors for a batch of sequences."""
-        num_chunks = len(text) // chunk_size
-        input_batch = []
-        target_batch = []
+    def get_batches(text, chunk_size, batch_size):
+        num_batches = len(text) // (chunk_size * batch_size)
+        for i in range(num_batches):
+            batch_start = i * chunk_size * batch_size
+            batch_end = (i + 1) * chunk_size * batch_size
+            batch_chunks = []
+            batch_targets = []
+            
+            for j in range(batch_size):
+                chunk_start = batch_start + j * chunk_size
+                chunk_end = chunk_start + chunk_size
+                chunk = text[chunk_start:chunk_end]
+                next_char = text[chunk_end] if chunk_end < len(text) else text[0]
 
-        for i in range(0, num_chunks, batch_size):
-            batch_input = []
-            batch_target = []
-            for b in range(batch_size):
-                if i + b < num_chunks:
-                    chunk_start = (i + b) * chunk_size
-                    chunk_end = (i + b + 1) * chunk_size
-                    chunk = text[chunk_start:chunk_end]
-                    next_char = text[chunk_end] if chunk_end < len(text) else text[0]
+                input_indices = [vocab_index.index_of(c) for c in chunk]
+                target_indices = [vocab_index.index_of(c) for c in chunk[1:] + next_char]
+                
+                batch_chunks.append(input_indices)
+                batch_targets.append(target_indices)
+            
+            yield torch.LongTensor(batch_chunks), torch.LongTensor(batch_targets)
 
-                    # Prepend space as start-of-sequence token
-                    input_indices = [vocab_index.index_of(' ')] + [vocab_index.index_of(c) for c in chunk]
-                    target_indices = [vocab_index.index_of(c) for c in chunk + next_char]
-
-                    batch_input.append(input_indices)
-                    batch_target.append(target_indices)
-
-            # Padding the sequences in the batch to the same length
-            max_len = max(len(seq) for seq in batch_input)
-            padded_input = [seq + [vocab_index.index_of(' ')] * (max_len - len(seq)) for seq in batch_input]
-            padded_target = [seq + [vocab_index.index_of(' ')] * (max_len - len(seq)) for seq in batch_target]
-
-            input_batch.append(torch.LongTensor(padded_input))
-            target_batch.append(torch.LongTensor(padded_target))
-
-        return input_batch, target_batch
-
-    # Training loop
     for epoch in range(num_epochs):
         model.train()
         total_loss = 0
-        input_batches, target_batches = prepare_batch(train_text, vocab_index, chunk_size, batch_size)
+        num_batches = max(1, len(train_text) // (chunk_size * batch_size))  # Ensure at least 1 batch
 
-        for input_batch, target_batch in zip(input_batches, target_batches):
+        for input_batch, target_batch in get_batches(train_text, chunk_size, batch_size):
             optimizer.zero_grad()
-
-            # Input batch shape: [batch_size, sequence_length]
-            # Transpose it to [sequence_length, batch_size] for the transformer
-            input_tensor = input_batch.transpose(0, 1)
-            target_tensor = target_batch.transpose(0, 1)
-
-            output = model(input_tensor)
-            
-            # Using .reshape() to handle non-contiguous memory
-            loss = criterion(output.reshape(-1, vocab_size), target_tensor.reshape(-1))
+            output = model(input_batch)
+            loss = criterion(output.view(-1, vocab_size), target_batch.view(-1))
             loss.backward()
             optimizer.step()
 
             total_loss += loss.item()
 
-        avg_loss = total_loss / len(input_batches)
-        print(f"Epoch {epoch + 1}, Loss: {avg_loss}")
+        print(f"Epoch {epoch+1}, Loss: {total_loss / num_batches}")
 
-        # Evaluation on dev set
+        # Evaluate on dev set
         model.eval()
         dev_loss = 0
-        dev_input_batches, dev_target_batches = prepare_batch(dev_text, vocab_index, chunk_size, batch_size)
+        num_dev_batches = max(1, len(dev_text) // (chunk_size * batch_size))  # Ensure at least 1 batch
         with torch.no_grad():
-            for dev_input_batch, dev_target_batch in zip(dev_input_batches, dev_target_batches):
-                input_tensor = dev_input_batch.transpose(0, 1)
-                target_tensor = dev_target_batch.transpose(0, 1)
+            for input_dev, target_dev in get_batches(dev_text, chunk_size, batch_size):
+                output = model(input_dev)
+                dev_loss += criterion(output.view(-1, vocab_size), target_dev.view(-1)).item()
 
-                output = model(input_tensor)
-                
-                # Using .reshape() for non-contiguous tensors in evaluation too
-                dev_loss += criterion(output.reshape(-1, vocab_size), target_tensor.reshape(-1)).item()
-
-        avg_dev_loss = dev_loss / len(dev_input_batches)
-        dev_perplexity = math.exp(avg_dev_loss)
-        print(f"Dev Loss: {avg_dev_loss}, Dev Perplexity: {dev_perplexity}")
+        print(f"Dev Loss: {dev_loss / num_dev_batches}")
 
     return model
