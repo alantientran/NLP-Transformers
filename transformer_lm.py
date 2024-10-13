@@ -122,7 +122,7 @@ def train_lm(args, train_text, dev_text, vocab_index):
             output = model(input_tensor)
             loss = criterion(output.squeeze(1), target_tensor)
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1)  # Gradient clipping
+            # torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1)  # Gradient clipping
             optimizer.step()
 
             total_loss += loss.item()
