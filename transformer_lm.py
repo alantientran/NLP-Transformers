@@ -50,7 +50,9 @@ class NeuralLanguageModel(LanguageModel, nn.Module):
         self.decoder = nn.Linear(d_model, vocab_size)
         self.vocab_size = vocab_size
         self.num_positions = num_positions
-        self.init_weights()
+        # Function to initialize weights using Xavier uniform initialization
+        nn.init.xavier_uniform_(self.encoder.weight)
+
 
     def init_weights(self):
         initrange = 0.1
@@ -58,21 +60,17 @@ class NeuralLanguageModel(LanguageModel, nn.Module):
         self.decoder.bias.data.zero_()
         self.decoder.weight.data.uniform_(-initrange, initrange)
 
-    # def generate_square_subsequent_mask(self, sz):
-    #     mask = (torch.triu(torch.ones(sz, sz)) == 1).transpose(0, 1)
-    #     mask = mask.float().masked_fill(mask == 0, float('-inf')).masked_fill(mask == 1, float(0.0))
-    #     return mask
+    def create_mask(self, sz):
+        mask = (torch.triu(torch.ones(sz, sz)) == 1).transpose(0, 1)
+        mask = mask.float().masked_fill(mask == 0, float('-inf')).masked_fill(mask == 1, float(0.0))
+        return mask
 
     def forward(self, src):
         src = self.encoder(src) * math.sqrt(self.d_model)
         src = self.pos_encoder(src)
-        
-        # Generate causal mask
-        seq_len = src.size(1)
-        causal_mask = torch.triu(torch.ones(seq_len, seq_len), diagonal=1).bool().to(src.device)
-        
-        output = self.transformer_encoder(src.transpose(0, 1), mask=causal_mask)
-        output = self.decoder(output.transpose(0, 1))
+        src_mask = self.create_mask(src.size(0)).to(src.device)
+        output = self.transformer_encoder(src, src_mask)
+        output = self.decoder(output)
         return output
 
     def get_next_char_log_probs(self, context):
