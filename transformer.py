@@ -39,20 +39,15 @@ class Transformer(nn.Module):
         self.log_softmax = nn.LogSoftmax(dim=-1) # -1 is the last dimension
     
     def forward(self, indices):
-        # Step 1: Embed the input indices
         embedded = self.embedding(indices)
-        
-        # Step 2: Add positional encodings
         embedded_with_pos = self.positional_encoding(embedded)
-        
-        # Step 3: Pass through Transformer layers
         attn_maps = []
         output = embedded_with_pos
         for layer in self.layers:
             output, attn_map = layer(output)
             attn_maps.append(attn_map)
         
-        # Step 4: Predict at each position
+        # Predict at each position
         logits = self.fc_out(output)
         log_probs = self.log_softmax(logits)
         
@@ -69,13 +64,12 @@ class TransformerLayer(nn.Module):
         self.key_layer = nn.Linear(d_model, d_internal)
         self.value_layer = nn.Linear(d_model, d_internal)
         self.d_internal = d_internal
-
         self.linear1 = nn.Linear(d_internal, d_internal)
         self.relu = nn.ReLU() # non-linearity
         self.linear2 = nn.Linear(d_internal, d_model)
 
     def forward(self, input_vecs):
-        # Compute query, key, and value vectors of dim [batch_size, seq_len, d_internal]
+        # [batch_size, seq_len, d_internal]
         queries = self.query_layer(input_vecs)
         keys = self.key_layer(input_vecs)
         values = self.value_layer(input_vecs)
@@ -133,7 +127,7 @@ class PositionalEncoding(nn.Module):
 
 # This is a skeleton for train_classifier: you can implement this however you want
 def train_classifier(args, train, dev):
-    model = Transformer(vocab_size=27, num_positions=20, d_model=64, d_internal=128, num_classes=3, num_layers=1) # 27 characters, 3 classes
+    model = Transformer(vocab_size=27, num_positions=20, d_model=64, d_internal=128, num_classes=3, num_layers=4) # 27 characters, 3 classes
     model.train()
     optimizer = optim.Adam(model.parameters(), lr=1e-4)
     loss_fn = nn.NLLLoss()
@@ -142,11 +136,7 @@ def train_classifier(args, train, dev):
         total_loss = 0.0
         for example in train:
             optimizer.zero_grad()
-            
-            # Forward pass
             log_probs, _ = model(example.input_tensor)
-            
-            # Compute loss
             loss = loss_fn(log_probs.squeeze(0), example.output_tensor)
             loss.backward()
             optimizer.step()

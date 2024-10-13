@@ -78,7 +78,7 @@ class NeuralLanguageModel(LanguageModel, nn.Module):
         if not context:
             return np.log(np.ones(self.vocab_size) / self.vocab_size)
         
-        context_indices = [self.vocab_index.index_of(c) for c in context[-self.num_positions:]]
+        context_indices = [self.vocab_index.index_of(c) for c in context[-self.num_positions:]] # Get last num_positions characters
         context_tensor = torch.LongTensor(context_indices).unsqueeze(1)  # Add batch dimension
         with torch.no_grad():
             output = self.forward(context_tensor)
@@ -103,7 +103,7 @@ def train_lm(args, train_text, dev_text, vocab_index):
     criterion = nn.CrossEntropyLoss()
 
     chunk_size = 20
-    num_epochs = 10
+    num_epochs = 1
 
     for epoch in range(num_epochs):
         model.train()
