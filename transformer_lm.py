@@ -6,11 +6,10 @@ import math
 
 class LanguageModel(object):
     def get_next_char_log_probs(self, context) -> np.ndarray:
-        raise Exception("Only implemented in subclasses")
+        raise NotImplementedError("Only implemented in subclasses")
 
     def get_log_prob_sequence(self, next_chars, context) -> float:
-        raise Exception("Only implemented in subclasses")
-
+        raise NotImplementedError("Only implemented in subclasses")
 
 class UniformLanguageModel(LanguageModel):
     def __init__(self, voc_size):
@@ -22,7 +21,6 @@ class UniformLanguageModel(LanguageModel):
     def get_log_prob_sequence(self, next_chars, context):
         return np.log(1.0 / self.voc_size) * len(next_chars)
 
-
 class PositionalEncoding(nn.Module):
     def __init__(self, d_model: int, num_positions: int = 20, batched=False):
         super().__init__()
@@ -31,7 +29,7 @@ class PositionalEncoding(nn.Module):
 
     def forward(self, x):
         input_size = x.shape[-2]
-        indices_to_embed = torch.tensor(np.arange(input_size)).type(torch.LongTensor)
+        indices_to_embed = torch.arange(input_size, device=x.device)
         if self.batched:
             emb_unsq = self.emb(indices_to_embed).unsqueeze(0)
             return x + emb_unsq
@@ -50,9 +48,7 @@ class NeuralLanguageModel(LanguageModel, nn.Module):
         self.decoder = nn.Linear(d_model, vocab_size)
         self.vocab_size = vocab_size
         self.num_positions = num_positions
-        # Function to initialize weights using Xavier uniform initialization
-        nn.init.xavier_uniform_(self.encoder.weight)
-
+        self.init_weights()
 
     def init_weights(self):
         initrange = 0.1
@@ -76,14 +72,14 @@ class NeuralLanguageModel(LanguageModel, nn.Module):
     def get_next_char_log_probs(self, context):
         self.eval()
         if not context:
-            return np.log(np.ones(self.vocab_size) / self.vocab_size)
+            context = ' '  # Use space as start-of-sequence token
         
         context_indices = [self.vocab_index.index_of(c) for c in context[-self.num_positions:]]
-        context_tensor = torch.LongTensor(context_indices).unsqueeze(1)  # Add batch dimension
+        context_tensor = torch.LongTensor(context_indices).unsqueeze(1).to(next(self.parameters()).device)
         with torch.no_grad():
             output = self.forward(context_tensor)
             log_probs = torch.log_softmax(output[-1], dim=-1)
-        return log_probs.squeeze().numpy()
+        return log_probs.squeeze().cpu().numpy()
 
     def get_log_prob_sequence(self, next_chars, context):
         self.eval()
@@ -103,7 +99,7 @@ def train_lm(args, train_text, dev_text, vocab_index):
     criterion = nn.CrossEntropyLoss()
 
     chunk_size = 20
-    num_epochs = 10
+    num_epochs = 1  # Increased number of epochs
 
     for epoch in range(num_epochs):
         model.train()
@@ -113,19 +109,20 @@ def train_lm(args, train_text, dev_text, vocab_index):
         for i in range(num_chunks):
             chunk_start = i * chunk_size
             chunk_end = (i + 1) * chunk_size
-            chunk = train_text[chunk_start:chunk_end]
-            next_char = train_text[chunk_end] if chunk_end < len(train_text) else train_text[0]
+            chunk = ' ' + train_text[chunk_start:chunk_end - 1]  # Add space as start-of-sequence token
+            next_char = train_text[chunk_end - 1] if chunk_end <= len(train_text) else train_text[0]
             
             input_indices = [vocab_index.index_of(c) for c in chunk]
             target_indices = [vocab_index.index_of(c) for c in chunk[1:] + next_char]
 
-            input_tensor = torch.LongTensor(input_indices).unsqueeze(1) 
+            input_tensor = torch.LongTensor(input_indices).unsqueeze(1)
             target_tensor = torch.LongTensor(target_indices)
 
             optimizer.zero_grad()
             output = model(input_tensor)
             loss = criterion(output.squeeze(1), target_tensor)
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1)  # Gradient clipping
             optimizer.step()
 
             total_loss += loss.item()
@@ -138,14 +135,12 @@ def train_lm(args, train_text, dev_text, vocab_index):
         num_dev_chunks = len(dev_text) // chunk_size
         with torch.no_grad():
             for i in range(num_dev_chunks):
-                dev_chunk = dev_text[i*chunk_size:(i+1)*chunk_size]
-                next_char = dev_text[(i+1)*chunk_size] if (i+1)*chunk_size < len(dev_text) else dev_text[0]
+                dev_chunk = ' ' + dev_text[i*chunk_size:(i+1)*chunk_size - 1]  # Add space as start-of-sequence token
+                next_char = dev_text[(i+1)*chunk_size - 1] if (i+1)*chunk_size <= len(dev_text) else dev_text[0]
                 
                 input_dev = torch.LongTensor([vocab_index.index_of(c) for c in dev_chunk]).unsqueeze(1)
                 target_dev = torch.LongTensor([vocab_index.index_of(c) for c in dev_chunk[1:] + next_char])
                 output = model(input_dev)
                 dev_loss += criterion(output.squeeze(1), target_dev).item()
-        
-        print(f"Dev Loss: {dev_loss / num_dev_chunks}")
 
     return model
