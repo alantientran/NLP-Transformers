@@ -103,7 +103,7 @@ def train_lm(args, train_text, dev_text, vocab_index):
     criterion = nn.CrossEntropyLoss()
 
     chunk_size = 20
-    num_epochs = 1
+    num_epochs = 10
 
     for epoch in range(num_epochs):
         model.train()
