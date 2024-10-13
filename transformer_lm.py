@@ -48,7 +48,7 @@ class NeuralLanguageModel(LanguageModel, nn.Module):
     def __init__(self, vocab_size, num_positions, d_model, d_internal, num_layers, nhead=8):
         super(NeuralLanguageModel, self).__init__()
         self.model_type = 'Transformer'
-        self.pos_encoder = PositionalEncoding(d_model, num_positions, batched=False)
+        self.pos_encoder = PositionalEncoding(d_model, num_positions, batched=True)
         encoder_layers = nn.TransformerEncoderLayer(d_model, nhead, d_internal)
         self.transformer_encoder = nn.TransformerEncoder(encoder_layers, num_layers)
         self.encoder = nn.Embedding(vocab_size, d_model)
@@ -66,7 +66,7 @@ class NeuralLanguageModel(LanguageModel, nn.Module):
         self.decoder.bias.data.zero_()
         self.decoder.weight.data.uniform_(-initrange, initrange)
 
-    def generate_square_subsequent_mask(self, sz):
+    def create_mask(self, sz):
         mask = (torch.triu(torch.ones(sz, sz)) == 1).transpose(0, 1)
         mask = mask.float().masked_fill(mask == 0, float('-inf')).masked_fill(mask == 1, float(0.0))
         return mask
@@ -74,9 +74,9 @@ class NeuralLanguageModel(LanguageModel, nn.Module):
     def forward(self, src):
         src = self.encoder(src) * math.sqrt(self.d_model)
         src = self.pos_encoder(src)
-        src_mask = self.generate_square_subsequent_mask(src.size(0)).to(src.device)
-        output = self.transformer_encoder(src, src_mask)
-        output = self.decoder(output)
+        src_mask = self.create_mask(src.size(1)).to(src.device)
+        output = self.transformer_encoder(src.transpose(0, 1), src_mask)
+        output = self.decoder(output.transpose(0, 1))
         return output
 
     def get_next_char_log_probs(self, context):
@@ -86,12 +86,12 @@ class NeuralLanguageModel(LanguageModel, nn.Module):
         
         context_indices = [self.vocab_index.index_of(c) for c in context[-self.num_positions:]]
         if len(context_indices) < self.num_positions:
-            context_indices = [self.vocab_index.index_of(' ')] + context_indices  # Prepend start-of-sequence token
+            context_indices = [self.vocab_index.index_of(' ')] * (self.num_positions - len(context_indices)) + context_indices
         
-        context_tensor = torch.LongTensor(context_indices).unsqueeze(1)  # Add batch dimension
+        context_tensor = torch.LongTensor(context_indices).unsqueeze(0)  # Add batch dimension
         with torch.no_grad():
             output = self.forward(context_tensor)
-            log_probs = torch.log_softmax(output[-1], dim=-1)
+            log_probs = torch.log_softmax(output[:, -1], dim=-1)
         return log_probs.squeeze().numpy()
 
     def get_log_prob_sequence(self, next_chars, context):
