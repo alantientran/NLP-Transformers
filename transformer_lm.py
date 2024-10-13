@@ -6,11 +6,31 @@ import math
 
 class LanguageModel(object):
     def get_next_char_log_probs(self, context) -> np.ndarray:
+        """
+        Returns a log probability distribution over the next characters given a context.
+        The log should be base e
+
+        NOTE: You should make sure you call model.eval() to determinize inference here (turns off dropout
+        layers in TransformerEncoder).
+        :param context: the string context that the LM conditions on
+        :return: A numpy vector log P(y | context) where y ranges over the output vocabulary.
+        """
         raise Exception("Only implemented in subclasses")
+
 
     def get_log_prob_sequence(self, next_chars, context) -> float:
-        raise Exception("Only implemented in subclasses")
+        """
+        Scores a bunch of characters following context. That is, returns
+        log P(nc1, nc2, nc3, ... | context) = log P(nc1 | context) + log P(nc2 | context, nc1), ...
+        The log should be base e
 
+        NOTE: You should make sure you call model.eval() to determinize inference here (turns off dropout
+        layers in TransformerEncoder).
+        :param next_chars:
+        :param context:
+        :return: The float probability
+        """
+        raise Exception("Only implemented in subclasses")
 
 class UniformLanguageModel(LanguageModel):
     def __init__(self, voc_size):
@@ -76,10 +96,12 @@ class NeuralLanguageModel(LanguageModel, nn.Module):
     def get_next_char_log_probs(self, context):
         self.eval()
         if not context:
+            # If context is empty, return uniform distribution
             return np.log(np.ones(self.vocab_size) / self.vocab_size)
         
         context_indices = [self.vocab_index.index_of(c) for c in context[-self.num_positions:]] # Get last num_positions characters
         context_tensor = torch.LongTensor(context_indices).unsqueeze(1)  # Add batch dimension
+        # no_grad() is used to save memory by preventing gradient computation which is not needed during inference
         with torch.no_grad():
             output = self.forward(context_tensor)
             log_probs = torch.log_softmax(output[-1], dim=-1)
@@ -100,7 +122,7 @@ def train_lm(args, train_text, dev_text, vocab_index):
     model.vocab_index = vocab_index
 
     optimizer = optim.Adam(model.parameters(), lr=0.001)
-    criterion = nn.CrossEntropyLoss()
+    criterion = nn.CrossEntropyLoss() # use for multi-class classification problems instead of NLLLoss
 
     chunk_size = 20
     num_epochs = 10
@@ -114,17 +136,18 @@ def train_lm(args, train_text, dev_text, vocab_index):
             chunk_start = i * chunk_size
             chunk_end = (i + 1) * chunk_size
             chunk = train_text[chunk_start:chunk_end]
-            next_char = train_text[chunk_end] if chunk_end < len(train_text) else train_text[0]
+            next_char = train_text[chunk_end] if chunk_end < len(train_text) else train_text[0] # Wrap around
             
+            # Convert characters to indices in vocab list
             input_indices = [vocab_index.index_of(c) for c in chunk]
             target_indices = [vocab_index.index_of(c) for c in chunk[1:] + next_char]
 
-            input_tensor = torch.LongTensor(input_indices).unsqueeze(1) 
-            target_tensor = torch.LongTensor(target_indices)
+            input_tensor = torch.LongTensor(input_indices).unsqueeze(1) # Add dim to make batch size of 1
+            target_tensor = torch.LongTensor(target_indices) # expected output
 
             optimizer.zero_grad()
             output = model(input_tensor)
-            loss = criterion(output.squeeze(1), target_tensor)
+            loss = criterion(output.squeeze(1), target_tensor) # use CrossEntropyLoss and squeeze to remove batch dimension
             loss.backward()
             optimizer.step()
 
@@ -134,18 +157,4 @@ def train_lm(args, train_text, dev_text, vocab_index):
 
         # Evaluate on dev set
         model.eval()
-        dev_loss = 0
-        num_dev_chunks = len(dev_text) // chunk_size
-        with torch.no_grad():
-            for i in range(num_dev_chunks):
-                dev_chunk = dev_text[i*chunk_size:(i+1)*chunk_size]
-                next_char = dev_text[(i+1)*chunk_size] if (i+1)*chunk_size < len(dev_text) else dev_text[0]
-                
-                input_dev = torch.LongTensor([vocab_index.index_of(c) for c in dev_chunk]).unsqueeze(1)
-                target_dev = torch.LongTensor([vocab_index.index_of(c) for c in dev_chunk[1:] + next_char])
-                output = model(input_dev)
-                dev_loss += criterion(output.squeeze(1), target_dev).item()
-        
-        print(f"Dev Loss: {dev_loss / num_dev_chunks}")
-
     return model
