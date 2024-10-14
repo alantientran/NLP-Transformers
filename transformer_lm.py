@@ -80,16 +80,11 @@ class NeuralLanguageModel(LanguageModel, nn.Module):
         self.decoder.bias.data.zero_()
         self.decoder.weight.data.uniform_(-initrange, initrange)
 
-    def create_mask(self, sz):
-        mask = (torch.triu(torch.ones(sz, sz)) == 1).transpose(0, 1)
-        mask = mask.float().masked_fill(mask == 0, float('-inf')).masked_fill(mask == 1, float(0.0))
-        return mask
-
     def forward(self, src):
         src = self.encoder(src) * math.sqrt(self.d_model)
         src = self.pos_encoder(src)
-        src_mask = self.create_mask(src.size(0)).to(src.device)
-        output = self.transformer_encoder(src, src_mask)
+        mask = torch.triu(torch.ones(src.size(0), src.size(0))* float('-inf'), diagonal=1)
+        output = self.transformer_encoder(src, mask)
         output = self.decoder(output)
         return output
 
